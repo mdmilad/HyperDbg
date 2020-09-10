@@ -525,6 +525,7 @@ typedef struct _DEBUGGER_STEPPING_CORE_SPECIFIC_DETAILS
     BOOLEAN  IsWaitingForClockInterrupt;
     BOOLEAN  DisableExternalInterrupts;
     BOOLEAN  ChangeToPrimaryEptp;
+    BOOLEAN  IgnoreDebugException; // if this option is true then in the case of the debug exceptions (#DB) the processor ignores re-injecting it back to the guest
     UINT64   BufferToSaveThreadDetails;
     UINT32   TargetProcessId;
     UINT32   TargetThreadId;

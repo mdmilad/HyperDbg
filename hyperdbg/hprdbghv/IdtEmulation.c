@@ -124,6 +124,46 @@ IdtEmulationHandleExceptionAndNmi(VMEXIT_INTERRUPT_INFO InterruptExit, UINT32 Cu
             EventInjectUndefinedOpcode(CurrentProcessorIndex);
         }
     }
+    else if (InterruptExit.Vector == EXCEPTION_VECTOR_DEBUG_BREAKPOINT)
+    {
+        //
+        // Check whether the exception is coming for monitoring purpose,
+        // so we should ignore re-injecting it back to the guest; otherwise
+        // we should re-inject it
+        //
+        if (g_GuestState[CurrentProcessorIndex].DebuggerSteppingDetails.IgnoreDebugException)
+        {
+            //
+            // Test
+            //
+            LogInfo("called !");
+            
+            DbgBreakPoint();
+        }
+        else
+        {
+            //
+            // Re-inject the interrupt/exception
+            //
+            __vmx_vmwrite(VM_ENTRY_INTR_INFO, InterruptExit.Flags);
+
+            //
+            // re-write error code (if any)
+            //
+            if (InterruptExit.ErrorCodeValid)
+            {
+                //
+                // Read the error code
+                //
+                __vmx_vmread(VM_EXIT_INTR_ERROR_CODE, &ErrorCode);
+
+                //
+                // Write the error code
+                //
+                __vmx_vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, ErrorCode);
+            }
+        }
+    }
     else if (InterruptExit.Vector == EXCEPTION_VECTOR_PAGE_FAULT)
     {
         //

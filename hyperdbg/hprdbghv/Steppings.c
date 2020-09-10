@@ -14,6 +14,36 @@
 UINT32 ProcessId = 4488;
 UINT32 ThreadId  = 7632;
 
+VOID
+BroadcastTest(KDPC * Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2)
+{
+    UINT32 ProcessorCount;
+
+    //
+    // Find count of all the processors
+    //
+    ProcessorCount = KeQueryActiveProcessorCount(0);
+
+    for (size_t i = 0; i < ProcessorCount; i++)
+    {
+        g_GuestState[i].DebuggerSteppingDetails.IgnoreDebugException = TRUE;
+    }
+
+    //HvSetExceptionBitmap(1);
+    AsmVmxVmcall(VMCALL_SET_EXCEPTION_BITMAP, 1, 0, 0);
+    SteppingsSetDebugRegister(0, FALSE, ExAllocatePoolWithTag);
+
+    //
+    // Wait for all DPCs to synchronize at this point
+    //
+    KeSignalCallDpcSynchronize(SystemArgument2);
+
+    //
+    // Mark the DPC as being complete
+    //
+    KeSignalCallDpcDone(SystemArgument1);
+}
+
 BOOLEAN
 SteppingsInitialize()
 {
@@ -102,7 +132,8 @@ SteppingsInitialize()
     //
     // Test on grabbing a thread-state
     //
-    // SteppingsStartDebuggingThread(ProcessId, ThreadId);
+    //SteppingsStartDebuggingThread(ProcessId, ThreadId);
+    //KeGenericCallDpc(BroadcastTest, 0x0);
 
     return TRUE;
 }
@@ -360,7 +391,7 @@ SteppingsHandleClockInterruptOnTargetProcess(PGUEST_REGS GuestRegs, UINT32 Proce
                 {
                     g_GuestState[i].DebuggerSteppingDetails.IsWaitingForClockInterrupt  = FALSE;
                     g_GuestState[i].DebuggerSteppingDetails.TargetThreadId              = NULL;
-                    g_GuestState[i].DebuggerSteppingDetails.TargetThreadId              = NULL;
+                    g_GuestState[i].DebuggerSteppingDetails.TargetProcessId             = NULL;
                     g_GuestState[i].DebuggerSteppingDetails.TargetThreadKernelCr3.Flags = NULL;
                     g_GuestState[i].DebuggerSteppingDetails.BufferToSaveThreadDetails   = NULL;
 
@@ -810,4 +841,83 @@ SteppingsHandlesDebuggedThread(PDEBUGGER_STEPPING_THREAD_DETAILS ThreadSteppingD
     // disabled, we have to enable it
     //
     HvSetExternalInterruptExiting(TRUE);
+}
+
+// if apply to vmcs is true then should be called at vmx-root mode
+BOOLEAN
+SteppingsSetDebugRegister(UINT32 DebugRegNum, BOOLEAN ApplyToVmcs, UINT64 TargetAddress)
+{
+    DEBUG_REGISTER_7 Dr7 = {0};
+
+    //
+    // Debug registers can be dr0, dr1, dr2, dr3
+    //
+    if (DebugRegNum >= 4)
+    {
+        return FALSE;
+    }
+
+    //
+    // Configure the dr7 (dr6 is only to show the status)
+    // the configuration derived from https://stackoverflow.com/questions/40818920/
+    //
+    // Check-list:
+    //     - Set the reserved bits to their right values
+    //     - Set DR7.LE and DR7.GE to 1
+    //     - Set DR7.L0(L1, L2, L3) to 1 [local breakpoint]
+    //     - Make sure DR7.RW/0 (RW/1, RW/2, RW/3) is 0 [break on instruction exec]
+    //     - Make sure DR7.LEN0 (LEN1, LEN2, LEN3) is 0 [1 byte length]
+    //     - Set DR0 (1, 2, 3) to the instruction linear address
+    //     - Make sure linear address [DR0 to DR3] falls on the first byte of the instruction
+    //
+
+    //
+    // Must be 1
+    //
+    Dr7.Reserved1 = 1;
+
+    //
+    // Based on Intel Manual:
+    // we recommend that the LE and GE flags be set to 1 if exact breakpoints are required
+    //
+    Dr7.LocalExactBreakpoint  = 1;
+    Dr7.GlobalExactBreakpoint = 1;
+
+    //
+    // Set the target address and enable it on dr7
+    //
+    if (DebugRegNum == 0)
+    {
+        __writedr(0, TargetAddress);
+        Dr7.LocalBreakpoint1 = 1;
+    }
+    else if (DebugRegNum == 1)
+    {
+        __writedr(1, TargetAddress);
+        Dr7.LocalBreakpoint1 = 1;
+    }
+    else if (DebugRegNum == 2)
+    {
+        __writedr(2, TargetAddress);
+        Dr7.LocalBreakpoint2 = 1;
+    }
+    else if (DebugRegNum == 3)
+    {
+        __writedr(3, TargetAddress);
+        Dr7.LocalBreakpoint3 = 1;
+    }
+
+    //
+    // apply debug register 7
+    //
+    if (ApplyToVmcs)
+    {
+        __vmx_vmwrite(GUEST_DR7, Dr7.Flags);
+    }
+    else
+    {
+        __writedr(7, Dr7.Flags);
+    }
+
+    return TRUE;
 }
